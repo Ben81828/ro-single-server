@@ -1,59 +1,67 @@
-version: '2.1'
 services:
   mariadb:
-    image: mariadb:5.5.60
+    image: mariadb:10.11
     container_name: RO_DB
     environment:
       - MYSQL_ROOT_PASSWORD=root
       - MYSQL_LOG_CONSOLE=true
+      - MARIADB_AUTO_UPGRADE=1
     volumes:
-      - ./ROEmulator/usr/local/mysql/data:/var/lib/mysql
-    ports: 
+      - mariadb_data:/var/lib/mysql
+    ports:
       - 3306:3306
-    networks: 
-      vpn:
-        ipv4_address: 172.168.99.2
+    networks:
+      - vpn
     healthcheck:
-        test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost"]
-        timeout: 5s
-        retries: 10
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 5s
+      retries: 10
 
+  db-init:
+    image: mariadb:10.11
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - vpn
+    command: ['sh', '-c', 'mysql -h mariadb -uroot -proot -e "CREATE DATABASE IF NOT EXISTS metabase; CREATE DATABASE IF NOT EXISTS ragnarok;"']
 
   apache:
     container_name: RO_WEB
-    build: 
+    build:
       context: ./ROEmulator/docker/apache2
       dockerfile: ./Dockerfile
     volumes:
       - ./ROEmulator/docker/apache2/httpd.conf:/etc/apache2/apache2.conf
-      - ./ROEmulator/docker/apache2/logs:/var/log/apache2/logs
+      - ./ROEmulator/docker/apache2/logs:/var/log/apache2
       - ./ROEmulator/docker/apache2/www:/var/www/html
-    ports: 
+    ports:
       - 8096:8096
     depends_on:
       mariadb:
         condition: service_healthy
-    networks: 
-      vpn:
-        ipv4_address: 172.168.99.3
-
+    networks:
+      - vpn
 
   metabase:
-    image: metabase/metabase:v0.39.2
+    image: rodrigomelgar/metabase-arm64:latest
     container_name: RO_DB_UI
     environment:
-      - MB_DB_FILE=/metabase-data
+      - MB_DB_TYPE=mysql
+      - MB_DB_DBNAME=metabase
+      - MB_DB_PORT=3306
+      - MB_DB_USER=root
+      - MB_DB_PASS=root
+      - MB_DB_HOST=mariadb
     volumes:
       - ./ROEmulator/docker/metabase/data:/metabase-data
-    ports: 
+    ports:
       - 3000:3000
     depends_on:
-      mariadb:
-        condition: service_healthy
-    networks: 
-      vpn:
-        ipv4_address: 172.168.99.4
-
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - vpn
 
 networks:
   vpn:
@@ -61,5 +69,8 @@ networks:
     ipam:
       driver: default
       config:
-        - subnet:  172.168.99.0/24
+        - subnet: 172.168.99.0/24
           gateway: 172.168.99.1
+
+volumes:
+  mariadb_data:
